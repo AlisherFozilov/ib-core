@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/mattn/go-sqlite3"
+	"io/ioutil"
+	"log"
 	"testing"
 )
 
@@ -34,6 +35,21 @@ VALUES ('loginOne', 'secret1', 'Alisher', '123'),
 	err = exportClientsToJSON(db)
 	if err != nil {
 		t.Error(err)
+	}
+
+	bytesWant, err := ioutil.ReadFile("testData/clients.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+	bytesGot, err := ioutil.ReadFile("clients.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	want := string(bytesWant)
+	got := string(bytesGot)
+	if got != want {
+		t.Error("Files don't match")
 	}
 }
 

@@ -297,14 +297,14 @@ func importClientsFromJSON(db *sql.DB) error {
 func mapBytesToClients(data []byte,
 	unmarshal func([]byte, interface{}) error,
 ) ([]interface{}, error){
-	clients := []Client{}
-	err := unmarshal(data, &clients)
+	clientsExport := ClientsExport{}
+	err := unmarshal(data, &clientsExport)
 	if err != nil {
 		return nil, err
 	}
-	ifaces := make([]interface{}, len(clients))
+	ifaces := make([]interface{}, len(clientsExport.Clients))
 	for index := range ifaces {
-		ifaces[index] = clients[index]
+		ifaces[index] = clientsExport.Clients[index]
 	}
 	return ifaces, nil
 }
@@ -337,14 +337,14 @@ func importAtmsFromJSON(db *sql.DB) error {
 func mapBytesToAtms(data []byte,
 	unmarshal func([]byte, interface{}) error,
 ) ([]interface{}, error){
-	atm := []Atm{}
-	err := unmarshal(data, &atm)
+	atmsExport := AtmsExport{}
+	err := unmarshal(data, &atmsExport)
 	if err != nil {
 		return nil, err
 	}
-	ifaces := make([]interface{}, len(atm))
+	ifaces := make([]interface{}, len(atmsExport.Atms))
 	for index := range ifaces {
-		ifaces[index] = atm[index]
+		ifaces[index] = atmsExport.Atms[index]
 	}
 	return ifaces, nil
 }
@@ -374,15 +374,14 @@ func importBankAccountsFromJSON(db *sql.DB) error {
 func mapBytesToBankAccounts(data []byte,
 	unmarshal func([]byte, interface{}) error,
 ) ([]interface{}, error){
-	bankAccount := []BankAccount{}
-
-	err := unmarshal(data, &bankAccount)
+	bankAccountsExport := BankAccountsExport{}
+	err := unmarshal(data, &bankAccountsExport)
 	if err != nil {
 		return nil, err
 	}
-	ifaces := make([]interface{}, len(bankAccount))
+	ifaces := make([]interface{}, len(bankAccountsExport.BankAccounts))
 	for index := range ifaces {
-		ifaces[index] = bankAccount[index]
+		ifaces[index] = bankAccountsExport.BankAccounts[index]
 	}
 	return ifaces, nil
 }
@@ -401,6 +400,36 @@ func insertBankAccountToDB(iface interface{}, db *sql.DB) error {
 	return nil
 }
 
+func importClientsFromXML(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"clients.xml",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToClients(data, xml.Unmarshal)
+		},
+		insertClientToDB,
+	)
+}
+func importAtmsFromXML(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"atms.xml",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToAtms(data, xml.Unmarshal)
+		},
+		insertAtmToDB,
+	)
+}
+func importBankAccountsFromXML(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"banc-accounts.xml",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToBankAccounts(data, xml.Unmarshal)
+		},
+		insertBankAccountToDB,
+	)
+}
 
 func importFromFile(db *sql.DB, filename string,
 	mapBytesToInterfaces func([]byte) ([]interface{}, error),
