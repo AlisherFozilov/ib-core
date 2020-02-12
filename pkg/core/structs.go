@@ -19,3 +19,15 @@ type Atm struct {
 	Id      int64
 	Address string
 }
+
+type ClientsExport struct {
+	Clients []Client
+}
+
+type BankAccountsExport struct {
+	BankAccounts []BankAccount
+}
+
+type AtmsExport struct {
+	Atms []Atm
+}

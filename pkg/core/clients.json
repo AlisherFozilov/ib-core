@@ -1,1 +1,1 @@
-[{"Id":1,"Login":"loginOne","Password":"secret1","Name":"Alisher","Phone":"123"},{"Id":2,"Login":"loginTwo","Password":"secret2","Name":"Fozilov","Phone":"456"}]
+{"Clients":[{"Id":1,"Login":"loginOne","Password":"secret1","Name":"Alisher","Phone":"123"},{"Id":2,"Login":"loginTwo","Password":"secret2","Name":"Fozilov","Phone":"456"}]}

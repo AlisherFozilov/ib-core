@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io/ioutil"
 )
@@ -98,10 +99,47 @@ func getClientIdByLogin(login string, db *sql.DB) (id int64, err error) {
 	return id, nil
 }
 
+//----------------------------JSON && XML----------------
+
+//Export
+//JSON
+
 func exportClientsToJSON(db *sql.DB) error {
 	return exportToFile(db, getAllClientsDataSQL, "clients.json",
-		mapRowToClient, json.Marshal)
+		mapRowToClient, json.Marshal, mapInterfaceSliceToClients)
 }
+func exportAtmsToJSON(db *sql.DB) error {
+	return exportToFile(db, getAllAtmDataSQL, "atms.json",
+		mapRowToAtm, json.Marshal,
+		mapInterfaceSliceToAtms)
+}
+func exportBankAccountsToJSON(db *sql.DB) error {
+	return exportToFile(db, getAllBankAccountsDataSQL, "bank-accounts.json",
+		mapRowToBankAccount, json.Marshal,
+		mapInterfaceSliceToBankAccounts)
+}
+
+//XML
+
+func exportClientsToXML(db *sql.DB) error {
+	return exportToFile(db, getAllClientsDataSQL, "clients.xml",
+		mapRowToClient, xml.Marshal, mapInterfaceSliceToClients)
+}
+func exportAtmsToXML(db *sql.DB) error {
+	return exportToFile(db, getAllAtmDataSQL, "atms.xml",
+		mapRowToAtm, xml.Marshal,
+		mapInterfaceSliceToAtms)
+}
+func exportBankAccountsToXML(db *sql.DB) error {
+	return exportToFile(db, getAllBankAccountsDataSQL, "bank-accounts.xml",
+		mapRowToBankAccount, xml.Marshal,
+		mapInterfaceSliceToBankAccounts)
+}
+
+type mapperRowTo func(rows *sql.Rows) (interface{}, error)
+type mapperInterfaceSliceTo func([]interface{})interface{}
+type marshaller func(interface{}) ([]byte, error)
+
 func mapRowToClient(rows *sql.Rows) (interface{}, error) {
 	client := Client{}
 	err := rows.Scan(&client.Id, &client.Login, &client.Password,
@@ -111,11 +149,6 @@ func mapRowToClient(rows *sql.Rows) (interface{}, error) {
 	}
 	return client, nil
 }
-
-func exportAtmsToJSON(db *sql.DB) error {
-	return exportToFile(db, getAllAtmDataSQL, "atms.json",
-		mapRowToAtm, json.Marshal)
-}
 func mapRowToAtm(rows *sql.Rows) (interface{}, error) {
 	atm := Atm{}
 	err := rows.Scan(&atm.Id, &atm.Address)
@@ -123,11 +156,6 @@ func mapRowToAtm(rows *sql.Rows) (interface{}, error) {
 		return nil, err
 	}
 	return atm, nil
-}
-
-func exportBankAccountsToJSON(db *sql.DB) error {
-	return exportToFile(db, getAllBankAccountsDataSQL, "bank-accounts.json",
-		mapRowToBankAccount, json.Marshal)
 }
 func mapRowToBankAccount(rows *sql.Rows) (interface{}, error) {
 	bankAccount := BankAccount{}
@@ -142,6 +170,61 @@ func mapRowToBankAccount(rows *sql.Rows) (interface{}, error) {
 	}
 	return bankAccount, nil
 }
+
+func mapInterfaceSliceToClients(ifaces []interface{}) interface{} {
+	clients := make([]Client, len(ifaces))
+	for i := range ifaces {
+		clients[i] = ifaces[i].(Client)
+	}
+	clientsExport := ClientsExport{Clients:clients}
+	return clientsExport
+}
+func mapInterfaceSliceToAtms(ifaces []interface{}) interface{} {
+	atms := make([]Atm, len(ifaces))
+	for i := range ifaces {
+		atms[i] = ifaces[i].(Atm)
+	}
+	atmsExport := AtmsExport{Atms:atms}
+	return atmsExport
+}
+func mapInterfaceSliceToBankAccounts(ifaces []interface{}) interface{} {
+	bankAccounts := make([]BankAccount, len(ifaces))
+	for i := range ifaces {
+		bankAccounts[i] = ifaces[i].(BankAccount)
+	}
+	bankAccountsExport := BankAccountsExport{BankAccounts:bankAccounts}
+	return bankAccountsExport
+}
+
+func exportToFile(db *sql.DB, querySQL string, filename string,
+	mapRow mapperRowTo, marshal marshaller,
+	mapDataSlice mapperInterfaceSliceTo) error {
+
+	rows, err := db.Query(querySQL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = rows.Close()
+	}()
+	var dataSlice []interface{}
+	for rows.Next() {
+		dataElement, err := mapRow(rows)
+		if err != nil {
+			return err
+		}
+		dataSlice = append(dataSlice, dataElement)
+	}
+	exportData := mapDataSlice(dataSlice)
+	data, err := marshal(exportData)
+	err = ioutil.WriteFile(filename, data, 0666)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+//---------simple way
 /*
 func importClientsFromJSON(db *sql.DB) error {
 	clientsData, err := ioutil.ReadFile("clients.json")
@@ -171,7 +254,6 @@ func importClientsFromJSON(db *sql.DB) error {
 
 	return nil
 }
-*/
 func importAtmsFromJSON(db *sql.DB) error {
 	atmsData, err := ioutil.ReadFile("atms.json")
 	if err != nil {
@@ -197,36 +279,11 @@ func importAtmsFromJSON(db *sql.DB) error {
 
 	return nil
 }
+*/
 
-type mapperRowTo func(rows *sql.Rows) (interface{}, error)
-func exportToFile(db *sql.DB, querySQL string, filename string,
-	mapRow mapperRowTo, marshal func(interface{}) ([]byte, error)) error {
+//Import
 
-	rows, err := db.Query(querySQL)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = rows.Close()
-	}()
-	var dataSlice []interface{}
-	for rows.Next() {
-		dataElement, err := mapRow(rows)
-		if err != nil {
-			return err
-		}
-		dataSlice = append(dataSlice, dataElement)
-	}
-
-	data, err := marshal(dataSlice)
-	err = ioutil.WriteFile(filename, data, 0666)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-
+//JSON
 func importClientsFromJSON(db *sql.DB) error {
 	return importFromFile(
 		db,
@@ -266,6 +323,84 @@ func insertClientToDB(iface interface{}, db *sql.DB) error {
 	}
 	return nil
 }
+
+func importAtmsFromJSON(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"atms.json",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToAtms(data, json.Unmarshal)
+		},
+		insertAtmToDB,
+	)
+}
+func mapBytesToAtms(data []byte,
+	unmarshal func([]byte, interface{}) error,
+) ([]interface{}, error){
+	atm := []Atm{}
+	err := unmarshal(data, &atm)
+	if err != nil {
+		return nil, err
+	}
+	ifaces := make([]interface{}, len(atm))
+	for index := range ifaces {
+		ifaces[index] = atm[index]
+	}
+	return ifaces, nil
+}
+func insertAtmToDB(iface interface{}, db *sql.DB) error {
+	atm := iface.(Atm)
+	_, err := db.Exec(
+		insertAtmSQL,
+		sql.Named("id", atm.Id),
+		sql.Named("name", atm.Address),
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func importBankAccountsFromJSON(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"banc-accounts.json",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToBankAccounts(data, json.Unmarshal)
+		},
+		insertBankAccountToDB,
+	)
+}
+func mapBytesToBankAccounts(data []byte,
+	unmarshal func([]byte, interface{}) error,
+) ([]interface{}, error){
+	bankAccount := []BankAccount{}
+
+	err := unmarshal(data, &bankAccount)
+	if err != nil {
+		return nil, err
+	}
+	ifaces := make([]interface{}, len(bankAccount))
+	for index := range ifaces {
+		ifaces[index] = bankAccount[index]
+	}
+	return ifaces, nil
+}
+func insertBankAccountToDB(iface interface{}, db *sql.DB) error {
+	bankAccount := iface.(BankAccount)
+	_, err := db.Exec(
+		insertBankAccountSQL,
+		sql.Named("id", bankAccount.Id),
+		sql.Named("name", bankAccount.Balance),
+		sql.Named("login", bankAccount.AccountId),
+		sql.Named("password", bankAccount.ClientId),
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 
 func importFromFile(db *sql.DB, filename string,
 	mapBytesToInterfaces func([]byte) ([]interface{}, error),

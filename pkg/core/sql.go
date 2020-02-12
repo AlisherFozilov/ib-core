@@ -96,4 +96,10 @@ ON CONFLICT DO NOTHING ;
 	getAllBankAccountsDataSQL = `
 SELECT *
 FROM bank_accounts;`
+
+	insertBankAccountSQL = `
+INSERT INTO bank_accounts
+VALUES (:id, :client_id, :accountId, :balance)
+ON CONFLICT DO NOTHING ;
+`
 )
