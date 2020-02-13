@@ -8,6 +8,12 @@ type Client struct {
 	Phone    string
 }
 
+type Manager struct {
+	Id int64
+	Login string
+	Password string
+}
+
 type BankAccount struct {
 	Id        int64
 	ClientId  int64

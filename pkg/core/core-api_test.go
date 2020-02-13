@@ -46,9 +46,7 @@ VALUES ('loginOne', 'secret1', 'Alisher', '123'),
 		log.Fatal(err)
 	}
 
-	want := string(bytesWant)
-	got := string(bytesGot)
-	if got != want {
+	if !(string(bytesWant) == string(bytesGot)) {
 		t.Error("Files don't match")
 	}
 }

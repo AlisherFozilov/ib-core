@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"strconv"
 )
 
 func Init(db *sql.DB) (err error) {
@@ -42,6 +44,9 @@ func execQueries(queries []string, db *sql.DB) (err error) {
 }
 
 //---------------Manager
+func checkLoginOnUnique(login, getLoginByLogin string, db *sql.DB) bool {
+	row := db.QueryRow(getLoginByLogin)
+}
 func addClient(client Client, db *sql.DB) (err error) {
 	//TODO: check login on unique
 	_, err = db.Exec(
@@ -50,6 +55,14 @@ func addClient(client Client, db *sql.DB) (err error) {
 		sql.Named("password", client.Password),
 		sql.Named("name", client.Name),
 		sql.Named("phone", client.Phone),
+	)
+	return err
+}
+func addManager(manager Manager, db *sql.DB) (err error) {
+	_, err = db.Exec(
+		insertClientWithoutIdSQL,
+		sql.Named("login", manager.Login),
+		sql.Named("password", manager.Password),
 	)
 	return err
 }
@@ -69,8 +82,8 @@ func addBankAccount(id int64, querySQL string, db *sql.DB) (err error) {
 		querySQL,
 		id,
 		//sql.Named("client_id", id),
-		sql.Named("AccountId", bankAccountsCount),
-		sql.Named("Balance", startBalance),
+		sql.Named("account_number", bankAccountsCount),
+		sql.Named("balance", startBalance),
 	)
 	if err != nil {
 		return err
@@ -97,6 +110,165 @@ func getClientIdByLogin(login string, db *sql.DB) (id int64, err error) {
 		return 0, err
 	}
 	return id, nil
+}
+
+func transferToClient(
+	amount, senderId, senderAccountNumber, receiverId,
+	receiverAccountNumber int64,
+	db *sql.DB) error {
+
+	return transferByReceiverAccountId(amount, senderId,
+		senderAccountNumber, receiverId, receiverAccountNumber,
+		getBalanceByClientIdAndAccountNumberSQL,
+		updateBalanceByClientIdAndAccountNumberSQL,
+		db)
+}
+
+const digitLimitForAccount = 4
+
+func payForService(serviceNumber string,
+	amount, payerId, payerAccountNumber int64,
+	db *sql.DB) error {
+
+	serviceIdStr := serviceNumber[:len(serviceNumber)-digitLimitForAccount]
+	accountNumberStr := serviceNumber[len(serviceNumber)-digitLimitForAccount:]
+
+	serviceId, err := strconv.Atoi(serviceIdStr)
+	if err != nil {
+		return err
+	}
+	accountNumber, err := strconv.Atoi(accountNumberStr)
+	if err != nil {
+		return err
+	}
+
+	return transferByReceiverAccountId(amount, payerId,
+		payerAccountNumber, int64(serviceId), int64(accountNumber),
+		getBalanceByServiceIdAndAccountNumberSQL,
+		updateBalanceByServiceIdAndAccountNumberSQL,
+		db)
+}
+
+func transferByReceiverAccountId(
+	amount, senderId, senderAccountNumber, receiverId,
+	receiverAccountNumber int64,
+	getBalanceByIdAndAccountNumber string,
+	updateBalanceByIdAndAccountNumber string,
+	db *sql.DB) error {
+
+	if amount < 1 {
+		return errors.New("zero ore less money to transfer")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+			return
+		}
+		err = tx.Commit()
+	}()
+
+	var balance int64
+	err = tx.QueryRow(
+		getBalanceByIdAndAccountNumber,
+		sql.Named("id", senderId),
+		sql.Named("account_number", senderAccountNumber),
+	).Scan(&balance)
+	if err != nil {
+		return err
+	}
+
+	if amount < balance {
+		return errors.New("no enough money to transfer")
+	}
+
+	moneyRest := balance - amount
+	_, err = tx.Exec(updateBalanceByIdAndAccountNumber,
+		sql.Named("balance", moneyRest),
+		sql.Named("id", senderId),
+		sql.Named("account_number", senderAccountNumber),
+	)
+	if err != nil {
+		return err
+	}
+
+	var receiverBalance int64
+	err = tx.QueryRow(getBalanceByClientIdAndAccountNumberSQL,
+		sql.Named("id", receiverId),
+		sql.Named("account_number", receiverAccountNumber),
+	).Scan(&receiverBalance)
+	if err != nil {
+		return err
+	}
+
+	increasedBalance := receiverBalance + amount
+	_, err = tx.Exec(updateBalanceByClientIdAndAccountNumberSQL,
+		sql.Named("balance", increasedBalance),
+		sql.Named("id", receiverId),
+		sql.Named("account_number", receiverAccountNumber),
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getClientIdByPhoneNumber(phone string, db *sql.DB) (int64, error) {
+	var clientId int64
+	err := db.QueryRow(getClientIdByPhoneSQL, phone).Scan(&clientId)
+	return clientId, err
+}
+
+func loginForManager(login, password string, db *sql.DB) (bool, error) {
+	return checkPassword(login, password, getClientPasswordByLoginSQL, db)
+}
+func loginForClient(login, password string, db *sql.DB) (bool, error) {
+	return checkPassword(login, password, getManagerPasswordByLoginSQL, db)
+}
+func checkPassword(login, password, getPasswordByLogin string, db *sql.DB) (bool, error) {
+	var dbPassword string
+
+	err := db.QueryRow(
+		getPasswordByLogin,
+		login).Scan(&dbPassword)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+
+		return false, queryError(getPasswordByLogin, err)
+	}
+
+	if dbPassword != password {
+		return false, ErrInvalidPass
+	}
+
+	return true, nil
+}
+
+func (receiver *QueryError) Unwrap() error {
+	return receiver.Err
+}
+
+func (receiver *QueryError) Error() string {
+	return fmt.Sprintf("can't execute query %s: %s", receiver.Query, receiver.Err.Error())
+}
+
+func queryError(query string, err error) *QueryError {
+	return &QueryError{Query: query, Err: err}
+}
+
+var ErrInvalidPass = errors.New("invalid password")
+
+type QueryError struct { // alt + enter
+	Query string
+	Err   error
 }
 
 //----------------------------JSON && XML----------------
@@ -137,7 +309,7 @@ func exportBankAccountsToXML(db *sql.DB) error {
 }
 
 type mapperRowTo func(rows *sql.Rows) (interface{}, error)
-type mapperInterfaceSliceTo func([]interface{})interface{}
+type mapperInterfaceSliceTo func([]interface{}) interface{}
 type marshaller func(interface{}) ([]byte, error)
 
 func mapRowToClient(rows *sql.Rows) (interface{}, error) {
@@ -176,7 +348,7 @@ func mapInterfaceSliceToClients(ifaces []interface{}) interface{} {
 	for i := range ifaces {
 		clients[i] = ifaces[i].(Client)
 	}
-	clientsExport := ClientsExport{Clients:clients}
+	clientsExport := ClientsExport{Clients: clients}
 	return clientsExport
 }
 func mapInterfaceSliceToAtms(ifaces []interface{}) interface{} {
@@ -184,7 +356,7 @@ func mapInterfaceSliceToAtms(ifaces []interface{}) interface{} {
 	for i := range ifaces {
 		atms[i] = ifaces[i].(Atm)
 	}
-	atmsExport := AtmsExport{Atms:atms}
+	atmsExport := AtmsExport{Atms: atms}
 	return atmsExport
 }
 func mapInterfaceSliceToBankAccounts(ifaces []interface{}) interface{} {
@@ -192,7 +364,7 @@ func mapInterfaceSliceToBankAccounts(ifaces []interface{}) interface{} {
 	for i := range ifaces {
 		bankAccounts[i] = ifaces[i].(BankAccount)
 	}
-	bankAccountsExport := BankAccountsExport{BankAccounts:bankAccounts}
+	bankAccountsExport := BankAccountsExport{BankAccounts: bankAccounts}
 	return bankAccountsExport
 }
 
@@ -292,11 +464,11 @@ func importClientsFromJSON(db *sql.DB) error {
 			return mapBytesToClients(data, json.Unmarshal)
 		},
 		insertClientToDB,
-		)
+	)
 }
 func mapBytesToClients(data []byte,
 	unmarshal func([]byte, interface{}) error,
-) ([]interface{}, error){
+) ([]interface{}, error) {
 	clientsExport := ClientsExport{}
 	err := unmarshal(data, &clientsExport)
 	if err != nil {
@@ -336,7 +508,7 @@ func importAtmsFromJSON(db *sql.DB) error {
 }
 func mapBytesToAtms(data []byte,
 	unmarshal func([]byte, interface{}) error,
-) ([]interface{}, error){
+) ([]interface{}, error) {
 	atmsExport := AtmsExport{}
 	err := unmarshal(data, &atmsExport)
 	if err != nil {
@@ -373,7 +545,7 @@ func importBankAccountsFromJSON(db *sql.DB) error {
 }
 func mapBytesToBankAccounts(data []byte,
 	unmarshal func([]byte, interface{}) error,
-) ([]interface{}, error){
+) ([]interface{}, error) {
 	bankAccountsExport := BankAccountsExport{}
 	err := unmarshal(data, &bankAccountsExport)
 	if err != nil {
@@ -390,9 +562,9 @@ func insertBankAccountToDB(iface interface{}, db *sql.DB) error {
 	_, err := db.Exec(
 		insertBankAccountSQL,
 		sql.Named("id", bankAccount.Id),
-		sql.Named("name", bankAccount.Balance),
-		sql.Named("login", bankAccount.AccountId),
-		sql.Named("password", bankAccount.ClientId),
+		sql.Named("balance", bankAccount.Balance),
+		sql.Named("account_number", bankAccount.AccountId),
+		sql.Named("client_id", bankAccount.ClientId),
 	)
 	if err != nil {
 		return err

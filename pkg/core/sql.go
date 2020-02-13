@@ -16,14 +16,14 @@ CREATE TABLE IF NOT EXISTS clients
     password TEXT NOT NULL ,
     name TEXT NOT NULL ,
     phone TEXT NOT NULL
-);` //bankAccountsNumber INTEGER NOT NULL
+);`  //bankAccountsNumber INTEGER NOT NULL
 	bankAccountsDDL = `
 CREATE TABLE IF NOT EXISTS bank_accounts
 (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     client_id INTEGER NOT NULL REFERENCES clients,
-    AccountId INTEGER NOT NULL,
-    Balance   INTEGER NOT NULL
+    account_number INTEGER NOT NULL,
+    balance   INTEGER NOT NULL
 );`
 	servicesDDL = `
 CREATE TABLE IF NOT EXISTS services
@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS bank_accounts_services
 (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     service_id INTEGER NOT NULL REFERENCES services,
-    AccountId  INTEGER NOT NULL,
-    Balance    INTEGER NOT NULL
+    account_number  INTEGER NOT NULL,
+    balance    INTEGER NOT NULL
 );`
 	atmsDDL = `
 CREATE TABLE IF NOT EXISTS atms
@@ -53,17 +53,20 @@ ON CONFLICT DO NOTHING ;`
 	insertClientWithoutIdSQL = `
 INSERT INTO clients(login, password, name, phone)
 VALUES (:login, :password, :name, :phone);`
+	insertManagerWithoutIdSQL = `
+INSERT INTO managers(login, password)
+VALUES (:login, :password);`
 	getBankAccountsCountByClientIdSQL = `
 SELECT count(ba.id)
 FROM bank_accounts ba
     JOIN clients c on ba.client_id = ?;
 `
 	insertBankAccountToClientSQL = `
-INSERT INTO bank_accounts (client_id, AccountId, Balance)
-VALUES (?, :AccountId, :Balance);`
+INSERT INTO bank_accounts (client_id, account_number, balance)
+VALUES (?, :account_number, :balance);`
 	insertBankAccountToServiceSQL = `
-INSERT INTO bank_accounts_services (service_id, AccountId, Balance)
-VALUES (?, :AccountId, :Balance);`
+INSERT INTO bank_accounts_services (service_id, account_number, balance)
+VALUES (?, :accountId, :balance);`
 	getClientIdByLoginSQL = `
 SELECT id
 FROM clients
@@ -91,15 +94,54 @@ FROM atms;`
 	insertAtmSQL = `
 INSERT INTO atms
 VALUES (:id, :address)
-ON CONFLICT DO NOTHING ;
-`
+ON CONFLICT DO NOTHING ;`
 	getAllBankAccountsDataSQL = `
 SELECT *
 FROM bank_accounts;`
 
 	insertBankAccountSQL = `
 INSERT INTO bank_accounts
-VALUES (:id, :client_id, :accountId, :balance)
+VALUES (:id, :client_id, :account_number, :balance)
 ON CONFLICT DO NOTHING ;
 `
+
+	getBalanceByClientIdAndAccountNumberSQL = `
+SELECT balance
+FROM bank_accounts ba
+WHERE ba.client_id = :id
+AND ba.account_number  = :account_number;`
+
+	updateBalanceByClientIdAndAccountNumberSQL = `
+UPDATE bank_accounts
+SET balance = :balance
+WHERE client_id = :id
+  AND account_number = :account_number;`
+
+	getClientIdByPhoneSQL = `
+SELECT ba.client_id
+FROM bank_accounts ba
+    JOIN clients c on ba.client_id = c.id
+WHERE c.phone = ?;`
+
+	getBalanceByServiceIdAndAccountNumberSQL = `
+SELECT balance
+FROM bank_accounts_services bas
+WHERE bas.service_id = :id
+  AND bas.account_number  = :account_number;`
+
+	updateBalanceByServiceIdAndAccountNumberSQL = `
+UPDATE bank_accounts_services
+SET balance = :balance
+WHERE service_id = :id
+  AND account_number = :account_number;
+`
+	getClientPasswordByLoginSQL = `
+SELECT password
+FROM clients
+WHERE login = ?;`
+
+	getManagerPasswordByLoginSQL = `
+SELECT password
+FROM managers
+WHERE login = ?;`
 )
