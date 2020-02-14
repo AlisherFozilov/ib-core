@@ -44,9 +44,43 @@ func execQueries(queries []string, db *sql.DB) (err error) {
 }
 
 //---------------Manager
-func checkLoginOnUnique(login, getLoginByLogin string, db *sql.DB) bool {
-	row := db.QueryRow(getLoginByLogin)
+func checkManagerLoginOnUnique(login string, db *sql.DB) (bool, error) {
+	return checkLoginOnUnique(login, getManagerLoginByLogin, db)
 }
+func checkClientLoginOnUnique(login string, db *sql.DB) (bool, error) {
+	return checkLoginOnUnique(login, getClientLoginByLogin, db)
+}
+func checkLoginOnUnique(login, getLoginByLogin string, db *sql.DB) (bool, error) {
+	err := db.QueryRow(getLoginByLogin, login).Scan()
+	if err == sql.ErrNoRows {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func replenishBankAccount(clientId, accountNumber, amount int64,
+	db *sql.DB) error {
+
+	var balance int64
+	err := db.QueryRow(getBalanceByClientIdAndAccountNumberSQL,
+		sql.Named("id", clientId),
+		sql.Named("account_number", accountNumber),
+	).Scan(&balance)
+	if err != nil {
+		return err
+	}
+	increasedBalance := balance + amount
+	_, err = db.Exec(updateBalanceByClientIdAndAccountNumberSQL,
+		sql.Named("balance", increasedBalance),
+		sql.Named("id", clientId),
+		sql.Named("account_number", accountNumber),
+	)
+	return err
+}
+
 func addClient(client Client, db *sql.DB) (err error) {
 	//TODO: check login on unique
 	_, err = db.Exec(
@@ -58,19 +92,24 @@ func addClient(client Client, db *sql.DB) (err error) {
 	)
 	return err
 }
+func addService(service Service, db *sql.DB) (err error) {
+	_, err = db.Exec(insertServiceWithoutIdSQL, sql.Named("name", service.Name))
+	return
+}
 func addManager(manager Manager, db *sql.DB) (err error) {
 	_, err = db.Exec(
-		insertClientWithoutIdSQL,
+		insertManagerWithoutIdSQL,
 		sql.Named("login", manager.Login),
 		sql.Named("password", manager.Password),
 	)
 	return err
 }
+func addBankAccount(id int64, getBankAccountsCountByUserIdSQL,
+	insertBankAccountToSQL string, db *sql.DB) (err error) {
 
-func addBankAccount(id int64, querySQL string, db *sql.DB) (err error) {
 	var bankAccountsCount int
 	err = db.QueryRow(
-		getBankAccountsCountByClientIdSQL,
+		getBankAccountsCountByUserIdSQL,
 		id,
 	).Scan(&bankAccountsCount)
 	if err != nil {
@@ -79,9 +118,8 @@ func addBankAccount(id int64, querySQL string, db *sql.DB) (err error) {
 
 	const startBalance = 0
 	_, err = db.Exec(
-		querySQL,
-		id,
-		//sql.Named("client_id", id),
+		insertBankAccountToSQL,
+		sql.Named("id", id),
 		sql.Named("account_number", bankAccountsCount),
 		sql.Named("balance", startBalance),
 	)
@@ -92,10 +130,10 @@ func addBankAccount(id int64, querySQL string, db *sql.DB) (err error) {
 	return
 }
 func addBankAccountToClient(id int64, db *sql.DB) error {
-	return addBankAccount(id, insertBankAccountToClientSQL, db)
+	return addBankAccount(id, getBankAccountsCountByClientIdSQL, insertBankAccountToClientSQL, db)
 }
 func addBankAccountToService(id int64, db *sql.DB) error {
-	return addBankAccount(id, insertBankAccountToServiceSQL, db)
+	return addBankAccount(id, getBankAccountsServicesCountByServiceIdSQL, insertBankAccountToServiceSQL, db)
 }
 func addATM(address string, db *sql.DB) error {
 	_, err := db.Exec(insertAtmWithoutIdSQL, address)
@@ -112,56 +150,66 @@ func getClientIdByLogin(login string, db *sql.DB) (id int64, err error) {
 	return id, nil
 }
 
-func transferToClient(
-	amount, senderId, senderAccountNumber, receiverId,
-	receiverAccountNumber int64,
-	db *sql.DB) error {
-
-	return transferByReceiverAccountId(amount, senderId,
-		senderAccountNumber, receiverId, receiverAccountNumber,
+func transferToClient(transfer MoneyTransfer, db *sql.DB) error {
+	return transferByReceiverAccountId(
+		transfer,
 		getBalanceByClientIdAndAccountNumberSQL,
 		updateBalanceByClientIdAndAccountNumberSQL,
 		db)
 }
 
-const digitLimitForAccount = 4
-
 func payForService(serviceNumber string,
 	amount, payerId, payerAccountNumber int64,
 	db *sql.DB) error {
 
-	serviceIdStr := serviceNumber[:len(serviceNumber)-digitLimitForAccount]
-	accountNumberStr := serviceNumber[len(serviceNumber)-digitLimitForAccount:]
-
-	serviceId, err := strconv.Atoi(serviceIdStr)
-	if err != nil {
-		return err
-	}
-	accountNumber, err := strconv.Atoi(accountNumberStr)
+	serviceId, accountNumber, err := serviceNumberToIdAndAccountNumber(serviceNumber)
 	if err != nil {
 		return err
 	}
 
-	return transferByReceiverAccountId(amount, payerId,
-		payerAccountNumber, int64(serviceId), int64(accountNumber),
+	transfer := MoneyTransfer{
+		Amount:                amount,
+		SenderId:              payerId,
+		SenderAccountNumber:   payerAccountNumber,
+		ReceiverId:            serviceId,
+		ReceiverAccountNumber: accountNumber,
+	}
+	return transferByReceiverAccountId(
+		transfer,
 		getBalanceByServiceIdAndAccountNumberSQL,
 		updateBalanceByServiceIdAndAccountNumberSQL,
 		db)
 }
 
+const digitLimitForAccount = 4
+
+func serviceNumberToIdAndAccountNumber(serviceNumber string) (int64, int64, error) {
+	serviceIdStr := serviceNumber[:len(serviceNumber)-digitLimitForAccount]
+	accountNumberStr := serviceNumber[len(serviceNumber)-digitLimitForAccount:]
+
+	serviceId, err := strconv.Atoi(serviceIdStr)
+	if err != nil {
+		return 0, 0, err
+	}
+	accountNumber, err := strconv.Atoi(accountNumberStr)
+	if err != nil {
+		return 0, 0, err
+	}
+	return int64(serviceId), int64(accountNumber), nil
+}
+
 func transferByReceiverAccountId(
-	amount, senderId, senderAccountNumber, receiverId,
-	receiverAccountNumber int64,
+	tfr MoneyTransfer,
 	getBalanceByIdAndAccountNumber string,
 	updateBalanceByIdAndAccountNumber string,
 	db *sql.DB) error {
 
-	if amount < 1 {
-		return errors.New("zero ore less money to transfer")
-	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
+	}
+	if tfr.Amount < 1 {
+		return errors.New("zero ore less money to transfer")
 	}
 
 	defer func() {
@@ -175,22 +223,22 @@ func transferByReceiverAccountId(
 	var balance int64
 	err = tx.QueryRow(
 		getBalanceByIdAndAccountNumber,
-		sql.Named("id", senderId),
-		sql.Named("account_number", senderAccountNumber),
+		sql.Named("id", tfr.SenderId),
+		sql.Named("account_number", tfr.SenderAccountNumber),
 	).Scan(&balance)
 	if err != nil {
 		return err
 	}
 
-	if amount < balance {
+	if tfr.Amount > balance {
 		return errors.New("no enough money to transfer")
 	}
 
-	moneyRest := balance - amount
+	moneyRest := balance - tfr.Amount
 	_, err = tx.Exec(updateBalanceByIdAndAccountNumber,
 		sql.Named("balance", moneyRest),
-		sql.Named("id", senderId),
-		sql.Named("account_number", senderAccountNumber),
+		sql.Named("id", tfr.SenderId),
+		sql.Named("account_number", tfr.SenderAccountNumber),
 	)
 	if err != nil {
 		return err
@@ -198,18 +246,18 @@ func transferByReceiverAccountId(
 
 	var receiverBalance int64
 	err = tx.QueryRow(getBalanceByClientIdAndAccountNumberSQL,
-		sql.Named("id", receiverId),
-		sql.Named("account_number", receiverAccountNumber),
+		sql.Named("id", tfr.ReceiverId),
+		sql.Named("account_number", tfr.ReceiverAccountNumber),
 	).Scan(&receiverBalance)
 	if err != nil {
 		return err
 	}
 
-	increasedBalance := receiverBalance + amount
+	increasedBalance := receiverBalance + tfr.Amount
 	_, err = tx.Exec(updateBalanceByClientIdAndAccountNumberSQL,
 		sql.Named("balance", increasedBalance),
-		sql.Named("id", receiverId),
-		sql.Named("account_number", receiverAccountNumber),
+		sql.Named("id", tfr.ReceiverId),
+		sql.Named("account_number", tfr.ReceiverAccountNumber),
 	)
 	if err != nil {
 		return err
@@ -225,10 +273,10 @@ func getClientIdByPhoneNumber(phone string, db *sql.DB) (int64, error) {
 }
 
 func loginForManager(login, password string, db *sql.DB) (bool, error) {
-	return checkPassword(login, password, getClientPasswordByLoginSQL, db)
+	return checkPassword(login, password, getManagerPasswordByLoginSQL, db)
 }
 func loginForClient(login, password string, db *sql.DB) (bool, error) {
-	return checkPassword(login, password, getManagerPasswordByLoginSQL, db)
+	return checkPassword(login, password, getClientPasswordByLoginSQL, db)
 }
 func checkPassword(login, password, getPasswordByLogin string, db *sql.DB) (bool, error) {
 	var dbPassword string
@@ -255,11 +303,9 @@ func checkPassword(login, password, getPasswordByLogin string, db *sql.DB) (bool
 func (receiver *QueryError) Unwrap() error {
 	return receiver.Err
 }
-
 func (receiver *QueryError) Error() string {
 	return fmt.Sprintf("can't execute query %s: %s", receiver.Query, receiver.Err.Error())
 }
-
 func queryError(query string, err error) *QueryError {
 	return &QueryError{Query: query, Err: err}
 }
@@ -333,7 +379,7 @@ func mapRowToBankAccount(rows *sql.Rows) (interface{}, error) {
 	bankAccount := BankAccount{}
 	err := rows.Scan(
 		&bankAccount.Id,
-		&bankAccount.ClientId,
+		&bankAccount.UserId,
 		&bankAccount.AccountId,
 		&bankAccount.Balance,
 	)
@@ -564,7 +610,7 @@ func insertBankAccountToDB(iface interface{}, db *sql.DB) error {
 		sql.Named("id", bankAccount.Id),
 		sql.Named("balance", bankAccount.Balance),
 		sql.Named("account_number", bankAccount.AccountId),
-		sql.Named("client_id", bankAccount.ClientId),
+		sql.Named("client_id", bankAccount.UserId),
 	)
 	if err != nil {
 		return err
@@ -671,7 +717,7 @@ func bankAccountsList(id int64, db *sql.DB) ([]BankAccount, error) {
 			return nil, err
 		}
 		bankAccounts = append(bankAccounts, BankAccount{
-			ClientId:  id,
+			UserId:    id,
 			AccountId: accountId,
 			Balance:   balance,
 		})

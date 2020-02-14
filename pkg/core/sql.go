@@ -61,12 +61,17 @@ SELECT count(ba.id)
 FROM bank_accounts ba
     JOIN clients c on ba.client_id = ?;
 `
+	getBankAccountsServicesCountByServiceIdSQL = `
+SELECT count(bas.id)
+FROM bank_accounts_services bas
+         JOIN services s on bas.service_id = ?;
+`
 	insertBankAccountToClientSQL = `
 INSERT INTO bank_accounts (client_id, account_number, balance)
-VALUES (?, :account_number, :balance);`
+VALUES (:id, :account_number, :balance);`
 	insertBankAccountToServiceSQL = `
 INSERT INTO bank_accounts_services (service_id, account_number, balance)
-VALUES (?, :accountId, :balance);`
+VALUES (:id, :account_number, :balance);`
 	getClientIdByLoginSQL = `
 SELECT id
 FROM clients
@@ -98,6 +103,9 @@ ON CONFLICT DO NOTHING ;`
 	getAllBankAccountsDataSQL = `
 SELECT *
 FROM bank_accounts;`
+	getAllBankAccountsServicesDataSQL = `
+SELECT *
+FROM bank_accounts_services;`
 
 	insertBankAccountSQL = `
 INSERT INTO bank_accounts
@@ -106,7 +114,7 @@ ON CONFLICT DO NOTHING ;
 `
 
 	getBalanceByClientIdAndAccountNumberSQL = `
-SELECT balance
+SELECT ba.balance
 FROM bank_accounts ba
 WHERE ba.client_id = :id
 AND ba.account_number  = :account_number;`
@@ -118,9 +126,8 @@ WHERE client_id = :id
   AND account_number = :account_number;`
 
 	getClientIdByPhoneSQL = `
-SELECT ba.client_id
-FROM bank_accounts ba
-    JOIN clients c on ba.client_id = c.id
+SELECT c.id
+FROM clients c
 WHERE c.phone = ?;`
 
 	getBalanceByServiceIdAndAccountNumberSQL = `
@@ -144,4 +151,19 @@ WHERE login = ?;`
 SELECT password
 FROM managers
 WHERE login = ?;`
+
+	getManagerLoginByLogin = `
+SELECT login
+FROM managers
+WHERE login = ?;`
+
+	getClientLoginByLogin = `
+SELECT login
+FROM clients
+WHERE login = ?;`
+
+	insertServiceWithoutIdSQL = `
+INSERT INTO services (name)
+VALUES (:name)
+ON CONFLICT DO NOTHING;`
 )
