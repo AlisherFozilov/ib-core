@@ -83,7 +83,7 @@ VALUES (:address);`
 SELECT atms.address
 FROM atms;`
 	getAllBankAccountsWithoutIdSQL = `
-SELECT Balance, AccountId
+SELECT balance, account_number
 FROM bank_accounts
 WHERE client_id = ?;`
 	getAllClientsDataSQL = `
@@ -166,4 +166,14 @@ WHERE login = ?;`
 INSERT INTO services (name)
 VALUES (:name)
 ON CONFLICT DO NOTHING;`
+
+	getServiceIdAndAccountNumberById = `
+SELECT service_id, account_number
+FROM bank_accounts_services
+WHERE service_id = ?;`
+
+	getAccountNumbersByClientIdSQL = `
+SELECT account_number
+FROM bank_accounts
+WHERE client_id = ?;`
 )

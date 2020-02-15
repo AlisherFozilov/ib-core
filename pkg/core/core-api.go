@@ -61,7 +61,7 @@ func checkLoginOnUnique(login, getLoginByLogin string, db *sql.DB) (bool, error)
 	return true, nil
 }
 
-func replenishBankAccount(clientId, accountNumber, amount int64,
+func ReplenishBankAccount(clientId, accountNumber, amount int64,
 	db *sql.DB) error {
 
 	var balance int64
@@ -81,7 +81,7 @@ func replenishBankAccount(clientId, accountNumber, amount int64,
 	return err
 }
 
-func addClient(client Client, db *sql.DB) (err error) {
+func AddClient(client Client, db *sql.DB) (err error) {
 	//TODO: check login on unique
 	_, err = db.Exec(
 		insertClientWithoutIdSQL,
@@ -92,11 +92,38 @@ func addClient(client Client, db *sql.DB) (err error) {
 	)
 	return err
 }
-func addService(service Service, db *sql.DB) (err error) {
-	_, err = db.Exec(insertServiceWithoutIdSQL, sql.Named("name", service.Name))
-	return
+func AddService(service Service, db *sql.DB) (serviceNumber string, err error) {
+	result, err := db.Exec(insertServiceWithoutIdSQL, sql.Named("name", service.Name))
+	if err != nil {
+		return "", err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return "", err
+	}
+	err = AddBankAccountToService(id, db)
+	if err != nil {
+		return "", err
+	}
+	var serviceId, accountNumber int64
+	err = db.QueryRow(getServiceIdAndAccountNumberById, id,
+	).Scan(&serviceId, &accountNumber)
+	if err != nil {
+		return "", err
+	}
+
+	const zerosForId = 1000_000_000
+	const zerosForAccount = 1_0000
+	serviceId += zerosForId
+	accountNumber += zerosForAccount
+	serviceIdStr := strconv.Itoa(int(serviceId))
+	accountNumberStr := strconv.Itoa(int(accountNumber))
+
+	serviceNumber = serviceIdStr[1:] + accountNumberStr[1:]
+	return serviceNumber, nil
 }
-func addManager(manager Manager, db *sql.DB) (err error) {
+
+func AddManager(manager Manager, db *sql.DB) (err error) {
 	_, err = db.Exec(
 		insertManagerWithoutIdSQL,
 		sql.Named("login", manager.Login),
@@ -129,17 +156,17 @@ func addBankAccount(id int64, getBankAccountsCountByUserIdSQL,
 
 	return
 }
-func addBankAccountToClient(id int64, db *sql.DB) error {
+func AddBankAccountToClient(id int64, db *sql.DB) error {
 	return addBankAccount(id, getBankAccountsCountByClientIdSQL, insertBankAccountToClientSQL, db)
 }
-func addBankAccountToService(id int64, db *sql.DB) error {
+func AddBankAccountToService(id int64, db *sql.DB) error {
 	return addBankAccount(id, getBankAccountsServicesCountByServiceIdSQL, insertBankAccountToServiceSQL, db)
 }
-func addATM(address string, db *sql.DB) error {
+func AddATM(address string, db *sql.DB) error {
 	_, err := db.Exec(insertAtmWithoutIdSQL, address)
 	return err
 }
-func getClientIdByLogin(login string, db *sql.DB) (id int64, err error) {
+func GetClientIdByLogin(login string, db *sql.DB) (id int64, err error) {
 	err = db.QueryRow(
 		getClientIdByLoginSQL,
 		login,
@@ -148,9 +175,9 @@ func getClientIdByLogin(login string, db *sql.DB) (id int64, err error) {
 		return 0, err
 	}
 	return id, nil
-}
+	}
 
-func transferToClient(transfer MoneyTransfer, db *sql.DB) error {
+func TransferToClient(transfer MoneyTransfer, db *sql.DB) error {
 	return transferByReceiverAccountId(
 		transfer,
 		getBalanceByClientIdAndAccountNumberSQL,
@@ -158,11 +185,11 @@ func transferToClient(transfer MoneyTransfer, db *sql.DB) error {
 		db)
 }
 
-func payForService(serviceNumber string,
+func PayForService(serviceNumber string,
 	amount, payerId, payerAccountNumber int64,
 	db *sql.DB) error {
 
-	serviceId, accountNumber, err := serviceNumberToIdAndAccountNumber(serviceNumber)
+	serviceId, accountNumber, err := ServiceNumberToIdAndAccountNumber(serviceNumber)
 	if err != nil {
 		return err
 	}
@@ -183,7 +210,7 @@ func payForService(serviceNumber string,
 
 const digitLimitForAccount = 4
 
-func serviceNumberToIdAndAccountNumber(serviceNumber string) (int64, int64, error) {
+func ServiceNumberToIdAndAccountNumber(serviceNumber string) (int64, int64, error) {
 	serviceIdStr := serviceNumber[:len(serviceNumber)-digitLimitForAccount]
 	accountNumberStr := serviceNumber[len(serviceNumber)-digitLimitForAccount:]
 
@@ -208,10 +235,6 @@ func transferByReceiverAccountId(
 	if err != nil {
 		return err
 	}
-	if tfr.Amount < 1 {
-		return errors.New("zero ore less money to transfer")
-	}
-
 	defer func() {
 		if err != nil {
 			_ = tx.Rollback()
@@ -219,10 +242,14 @@ func transferByReceiverAccountId(
 		}
 		err = tx.Commit()
 	}()
+	if tfr.Amount < 1 {
+		return errors.New("zero ore less money to transfer")
+	}
+
 
 	var balance int64
 	err = tx.QueryRow(
-		getBalanceByIdAndAccountNumber,
+		getBalanceByClientIdAndAccountNumberSQL,
 		sql.Named("id", tfr.SenderId),
 		sql.Named("account_number", tfr.SenderAccountNumber),
 	).Scan(&balance)
@@ -235,7 +262,7 @@ func transferByReceiverAccountId(
 	}
 
 	moneyRest := balance - tfr.Amount
-	_, err = tx.Exec(updateBalanceByIdAndAccountNumber,
+	_, err = tx.Exec(updateBalanceByClientIdAndAccountNumberSQL,
 		sql.Named("balance", moneyRest),
 		sql.Named("id", tfr.SenderId),
 		sql.Named("account_number", tfr.SenderAccountNumber),
@@ -245,7 +272,7 @@ func transferByReceiverAccountId(
 	}
 
 	var receiverBalance int64
-	err = tx.QueryRow(getBalanceByClientIdAndAccountNumberSQL,
+	err = tx.QueryRow(getBalanceByIdAndAccountNumber,
 		sql.Named("id", tfr.ReceiverId),
 		sql.Named("account_number", tfr.ReceiverAccountNumber),
 	).Scan(&receiverBalance)
@@ -254,7 +281,7 @@ func transferByReceiverAccountId(
 	}
 
 	increasedBalance := receiverBalance + tfr.Amount
-	_, err = tx.Exec(updateBalanceByClientIdAndAccountNumberSQL,
+	_, err = tx.Exec(updateBalanceByIdAndAccountNumber,
 		sql.Named("balance", increasedBalance),
 		sql.Named("id", tfr.ReceiverId),
 		sql.Named("account_number", tfr.ReceiverAccountNumber),
@@ -266,16 +293,16 @@ func transferByReceiverAccountId(
 	return nil
 }
 
-func getClientIdByPhoneNumber(phone string, db *sql.DB) (int64, error) {
+func GetClientIdByPhoneNumber(phone string, db *sql.DB) (int64, error) {
 	var clientId int64
 	err := db.QueryRow(getClientIdByPhoneSQL, phone).Scan(&clientId)
 	return clientId, err
 }
 
-func loginForManager(login, password string, db *sql.DB) (bool, error) {
+func LoginForManager(login, password string, db *sql.DB) (bool, error) {
 	return checkPassword(login, password, getManagerPasswordByLoginSQL, db)
 }
-func loginForClient(login, password string, db *sql.DB) (bool, error) {
+func LoginForClient(login, password string, db *sql.DB) (bool, error) {
 	return checkPassword(login, password, getClientPasswordByLoginSQL, db)
 }
 func checkPassword(login, password, getPasswordByLogin string, db *sql.DB) (bool, error) {
@@ -322,16 +349,16 @@ type QueryError struct { // alt + enter
 //Export
 //JSON
 
-func exportClientsToJSON(db *sql.DB) error {
+func ExportClientsToJSON(db *sql.DB) error {
 	return exportToFile(db, getAllClientsDataSQL, "clients.json",
 		mapRowToClient, json.Marshal, mapInterfaceSliceToClients)
 }
-func exportAtmsToJSON(db *sql.DB) error {
+func ExportAtmsToJSON(db *sql.DB) error {
 	return exportToFile(db, getAllAtmDataSQL, "atms.json",
 		mapRowToAtm, json.Marshal,
 		mapInterfaceSliceToAtms)
 }
-func exportBankAccountsToJSON(db *sql.DB) error {
+func ExportBankAccountsToJSON(db *sql.DB) error {
 	return exportToFile(db, getAllBankAccountsDataSQL, "bank-accounts.json",
 		mapRowToBankAccount, json.Marshal,
 		mapInterfaceSliceToBankAccounts)
@@ -339,24 +366,20 @@ func exportBankAccountsToJSON(db *sql.DB) error {
 
 //XML
 
-func exportClientsToXML(db *sql.DB) error {
+func ExportClientsToXML(db *sql.DB) error {
 	return exportToFile(db, getAllClientsDataSQL, "clients.xml",
 		mapRowToClient, xml.Marshal, mapInterfaceSliceToClients)
 }
-func exportAtmsToXML(db *sql.DB) error {
+func ExportAtmsToXML(db *sql.DB) error {
 	return exportToFile(db, getAllAtmDataSQL, "atms.xml",
 		mapRowToAtm, xml.Marshal,
 		mapInterfaceSliceToAtms)
 }
-func exportBankAccountsToXML(db *sql.DB) error {
+func ExportBankAccountsToXML(db *sql.DB) error {
 	return exportToFile(db, getAllBankAccountsDataSQL, "bank-accounts.xml",
 		mapRowToBankAccount, xml.Marshal,
 		mapInterfaceSliceToBankAccounts)
 }
-
-type mapperRowTo func(rows *sql.Rows) (interface{}, error)
-type mapperInterfaceSliceTo func([]interface{}) interface{}
-type marshaller func(interface{}) ([]byte, error)
 
 func mapRowToClient(rows *sql.Rows) (interface{}, error) {
 	client := Client{}
@@ -413,6 +436,10 @@ func mapInterfaceSliceToBankAccounts(ifaces []interface{}) interface{} {
 	bankAccountsExport := BankAccountsExport{BankAccounts: bankAccounts}
 	return bankAccountsExport
 }
+
+type mapperRowTo func(rows *sql.Rows) (interface{}, error)
+type mapperInterfaceSliceTo func([]interface{}) interface{}
+type marshaller func(interface{}) ([]byte, error)
 
 func exportToFile(db *sql.DB, querySQL string, filename string,
 	mapRow mapperRowTo, marshal marshaller,
@@ -502,7 +529,7 @@ func importAtmsFromJSON(db *sql.DB) error {
 //Import
 
 //JSON
-func importClientsFromJSON(db *sql.DB) error {
+func ImportClientsFromJSON(db *sql.DB) error {
 	return importFromFile(
 		db,
 		"clients.json",
@@ -512,6 +539,58 @@ func importClientsFromJSON(db *sql.DB) error {
 		insertClientToDB,
 	)
 }
+func ImportAtmsFromJSON(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"atms.json",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToAtms(data, json.Unmarshal)
+		},
+		insertAtmToDB,
+	)
+}
+func ImportBankAccountsFromJSON(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"banc-accounts.json",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToBankAccounts(data, json.Unmarshal)
+		},
+		insertBankAccountToDB,
+	)
+}
+
+func ImportClientsFromXML(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"clients.xml",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToClients(data, xml.Unmarshal)
+		},
+		insertClientToDB,
+	)
+}
+func ImportAtmsFromXML(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"atms.xml",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToAtms(data, xml.Unmarshal)
+		},
+		insertAtmToDB,
+	)
+}
+func ImportBankAccountsFromXML(db *sql.DB) error {
+	return importFromFile(
+		db,
+		"banc-accounts.xml",
+		func(data []byte) ([]interface{}, error) {
+			return mapBytesToBankAccounts(data, xml.Unmarshal)
+		},
+		insertBankAccountToDB,
+	)
+}
+
 func mapBytesToClients(data []byte,
 	unmarshal func([]byte, interface{}) error,
 ) ([]interface{}, error) {
@@ -542,16 +621,6 @@ func insertClientToDB(iface interface{}, db *sql.DB) error {
 	return nil
 }
 
-func importAtmsFromJSON(db *sql.DB) error {
-	return importFromFile(
-		db,
-		"atms.json",
-		func(data []byte) ([]interface{}, error) {
-			return mapBytesToAtms(data, json.Unmarshal)
-		},
-		insertAtmToDB,
-	)
-}
 func mapBytesToAtms(data []byte,
 	unmarshal func([]byte, interface{}) error,
 ) ([]interface{}, error) {
@@ -579,16 +648,6 @@ func insertAtmToDB(iface interface{}, db *sql.DB) error {
 	return nil
 }
 
-func importBankAccountsFromJSON(db *sql.DB) error {
-	return importFromFile(
-		db,
-		"banc-accounts.json",
-		func(data []byte) ([]interface{}, error) {
-			return mapBytesToBankAccounts(data, json.Unmarshal)
-		},
-		insertBankAccountToDB,
-	)
-}
 func mapBytesToBankAccounts(data []byte,
 	unmarshal func([]byte, interface{}) error,
 ) ([]interface{}, error) {
@@ -618,37 +677,6 @@ func insertBankAccountToDB(iface interface{}, db *sql.DB) error {
 	return nil
 }
 
-func importClientsFromXML(db *sql.DB) error {
-	return importFromFile(
-		db,
-		"clients.xml",
-		func(data []byte) ([]interface{}, error) {
-			return mapBytesToClients(data, xml.Unmarshal)
-		},
-		insertClientToDB,
-	)
-}
-func importAtmsFromXML(db *sql.DB) error {
-	return importFromFile(
-		db,
-		"atms.xml",
-		func(data []byte) ([]interface{}, error) {
-			return mapBytesToAtms(data, xml.Unmarshal)
-		},
-		insertAtmToDB,
-	)
-}
-func importBankAccountsFromXML(db *sql.DB) error {
-	return importFromFile(
-		db,
-		"banc-accounts.xml",
-		func(data []byte) ([]interface{}, error) {
-			return mapBytesToBankAccounts(data, xml.Unmarshal)
-		},
-		insertBankAccountToDB,
-	)
-}
-
 func importFromFile(db *sql.DB, filename string,
 	mapBytesToInterfaces func([]byte) ([]interface{}, error),
 	insertToDB func(interface{}, *sql.DB) error,
@@ -671,7 +699,7 @@ func importFromFile(db *sql.DB, filename string,
 }
 
 //---------------Client
-func atmsList(db *sql.DB) ([]string, error) {
+func AtmsList(db *sql.DB) ([]string, error) {
 	atms := make([]string, 0)
 	rows, err := db.Query(getAllAtmAddressesSQL)
 	if err != nil {
@@ -698,8 +726,8 @@ func atmsList(db *sql.DB) ([]string, error) {
 
 	return atms, nil
 }
-func bankAccountsList(id int64, db *sql.DB) ([]BankAccount, error) {
-	rows, err := db.Query(getAllBankAccountsWithoutIdSQL)
+func BankAccountsList(id int64, db *sql.DB) ([]BankAccount, error) {
+	rows, err := db.Query(getAllBankAccountsWithoutIdSQL, id)
 	if err != nil {
 		return nil, err
 	}
@@ -725,6 +753,25 @@ func bankAccountsList(id int64, db *sql.DB) ([]BankAccount, error) {
 	err = rows.Err()
 	if err != nil {
 		return nil, err
+	}
+
+	return bankAccounts, nil
+}
+func GetAllAccountNumbersByClientId(id int64, db *sql.DB) ([]int64, error) {
+	rows, err := db.Query(getAccountNumbersByClientIdSQL, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accountNumber int64
+	var bankAccounts []int64
+	for rows.Next() {
+		err := rows.Scan(&accountNumber)
+		if err != nil {
+			return nil, err
+		}
+		bankAccounts = append(bankAccounts, accountNumber)
 	}
 
 	return bankAccounts, nil

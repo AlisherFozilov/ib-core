@@ -1,8 +1,8 @@
 package core
 
 import (
+	"bytes"
 	"database/sql"
-	"fmt"
 	_ "github.com/mattn/go-sqlite3"
 	"io/ioutil"
 	"log"
@@ -10,7 +10,7 @@ import (
 )
 
 func createDBinMemory(t *testing.T) *sql.DB {
-	db, err := sql.Open("sqlite3", "file::memory:?cache=shared")
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ VALUES ('loginOne', 'secret1', 'Alisher', '123'),
 		t.Fatal(err)
 	}
 
-	err = exportClientsToJSON(db)
+	err = ExportClientsToJSON(db)
 	if err != nil {
 		t.Error(err)
 	}
@@ -65,7 +65,7 @@ func Test_importClientsFromJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = importClientsFromJSON(db)
+	err = ImportClientsFromJSON(db)
 	if err != nil {
 		t.Error(err)
 	}
@@ -77,14 +77,126 @@ FROM clients;`)
 	}
 	defer rows.Close()
 
-	client := Client{}
+	clientGot := Client{}
+	clientsWant := []Client{
+		{
+			1,
+			"loginOne",
+			"secret1",
+			"Alisher",
+			"123",
+		},
+		{
+				2,
+				"loginTwo",
+				"secret2",
+				"Fozilov",
+				"456",
+		},
+	}
+	index := 0
 	for rows.Next() {
-		err = rows.Scan(&client.Id, &client.Login, &client.Password,
-			&client.Name, &client.Phone)
+		err = rows.Scan(&clientGot.Id, &clientGot.Login, &clientGot.Password,
+			&clientGot.Name, &clientGot.Phone)
 		if err != nil {
 			t.Error(err)
 		}
-		fmt.Println(client)
+		if clientGot != clientsWant[index] {
+			t.Errorf("want: \n%v\n, got: \n%v\n", clientsWant, clientGot)
+		}
+		index++
+	}
+}
+
+func Test_exportClientsToXML(t *testing.T) {
+	db := createDBinMemory(t)
+	defer db.Close()
+	_, err := db.Exec(clientsDDL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.Exec(`INSERT INTO clients (login, password, name, phone)
+VALUES ('loginOne', 'secret1', 'Alisher', '123'),
+       ('loginTwo', 'secret2', 'Fozilov', '456');
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ExportClientsToXML(db)
+	if err != nil {
+		t.Error(err)
+	}
+
+	bytesWant, err := ioutil.ReadFile("testData/clients.xml")
+	if err != nil {
+		log.Fatal(err)
+	}
+	bytesGot, err := ioutil.ReadFile("clients.xml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+
+	if !bytes.Equal(bytesWant, bytesGot) {
+		t.Error("Files don't match")
+	}
+}
+func Test_importClientsFromXML(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("can't open db: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("can't close db: %v", err)
+		}
+	}()
+	_, err = db.Exec(clientsDDL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ImportClientsFromXML(db)
+	if err != nil {
+		t.Error(err)
+	}
+
+	rows, err := db.Query(`SELECT *
+FROM clients;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	clientsWant := []Client{
+		{
+			1,
+			"loginOne",
+			"secret1",
+			"Alisher",
+			"123",
+		},
+		{
+			2,
+			"loginTwo",
+			"secret2",
+			"Fozilov",
+			"456",
+		},
+	}
+	index := 0
+	clientGot := Client{}
+	for rows.Next() {
+		err = rows.Scan(&clientGot.Id, &clientGot.Login, &clientGot.Password,
+			&clientGot.Name, &clientGot.Phone)
+		if err != nil {
+			t.Error(err)
+		}
+		if clientGot != clientsWant[index] {
+			t.Errorf("want: \n%v\n, got: \n%v\n", clientsWant, clientGot)
+		}
+		index++
 	}
 }
 
@@ -181,7 +293,7 @@ func Test_addClient(t *testing.T) {
 		Name:     "c",
 		Phone:    "d",
 	}
-	err := addClient(client, db)
+	err := AddClient(client, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -191,7 +303,7 @@ func Test_addClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addClient(client, db)
+	err = AddClient(client, db)
 	if err != nil {
 		t.Error("want nil error")
 	}
@@ -224,7 +336,7 @@ func Test_addManager(t *testing.T) {
 		Login:    "a",
 		Password: "b",
 	}
-	err := addManager(manager, db)
+	err := AddManager(manager, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -234,7 +346,7 @@ func Test_addManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addManager(manager, db)
+	err = AddManager(manager, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -258,7 +370,7 @@ func Test_addBankAccountToClient(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	err := addBankAccountToClient(0, db)
+	err := AddBankAccountToClient(0, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -268,7 +380,7 @@ func Test_addBankAccountToClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addBankAccountToClient(0, db)
+	err = AddBankAccountToClient(0, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -291,7 +403,7 @@ func Test_addBankAccountToClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addBankAccountToClient(1, db)
+	err = AddBankAccountToClient(1, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -301,7 +413,7 @@ func Test_addBankAccountToClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addBankAccountToClient(1, db)
+	err = AddBankAccountToClient(1, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -322,7 +434,7 @@ func Test_addBankAccountToClient(t *testing.T) {
 		t.Errorf("want: \n%v\ngot: \n%v\n", bankAccountWant, bankAccountGot)
 	}
 
-	err = addBankAccountToClient(1, db)
+	err = AddBankAccountToClient(1, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -355,7 +467,7 @@ func Test_addBankAccountToService(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	err := addBankAccountToService(0, db)
+	err := AddBankAccountToService(0, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -365,7 +477,7 @@ func Test_addBankAccountToService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addBankAccountToService(0, db)
+	err = AddBankAccountToService(0, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -381,7 +493,7 @@ func Test_addBankAccountToService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addBankAccountToService(1, db)
+	err = AddBankAccountToService(1, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -391,7 +503,7 @@ func Test_addBankAccountToService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = addBankAccountToService(1, db)
+	err = AddBankAccountToService(1, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -412,7 +524,7 @@ func Test_addBankAccountToService(t *testing.T) {
 		t.Errorf("want: \n%v\ngot: \n%v\n", bankAccountWant, bankAccountGot)
 	}
 
-	err = addBankAccountToService(1, db)
+	err = AddBankAccountToService(1, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -446,7 +558,7 @@ func Test_addATM(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	err := addATM("atm-address", db)
+	err := AddATM("atm-address", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -457,7 +569,7 @@ func Test_addATM(t *testing.T) {
 	}
 
 	addressWant := "Rogun"
-	err = addATM(addressWant, db)
+	err = AddATM(addressWant, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -477,7 +589,7 @@ func Test_addATM(t *testing.T) {
 	}
 
 	addressWant = "Dushanbe"
-	err = addATM(addressWant, db)
+	err = AddATM(addressWant, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -502,7 +614,7 @@ func Test_addService(t *testing.T) {
 	service := Service{
 		Name: "taxes",
 	}
-	err := addService(service, db)
+	_, err := AddService(service, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -511,8 +623,12 @@ func Test_addService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = db.Exec(bankAccountsServicesDDL)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err = addService(service, db)
+	_, err = AddService(service, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -535,7 +651,7 @@ func Test_addService(t *testing.T) {
 	}
 
 	service.Name = "big-taxes"
-	err = addService(service, db)
+	_, err = AddService(service, db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -574,7 +690,7 @@ func Test_getClientIdByLogin(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	_, err := getClientIdByLogin("test", db)
+	_, err := GetClientIdByLogin("test", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -584,7 +700,7 @@ func Test_getClientIdByLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = getClientIdByLogin("test", db)
+	_, err = GetClientIdByLogin("test", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -605,7 +721,7 @@ func Test_getClientIdByLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, err := getClientIdByLogin("abc", db)
+	id, err := GetClientIdByLogin("abc", db)
 	if err != nil {
 		t.Error("want nil error")
 	}
@@ -618,7 +734,7 @@ func Test_getClientIdByPhoneNumber(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	_, err := getClientIdByPhoneNumber("123", db)
+	_, err := GetClientIdByPhoneNumber("123", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -628,7 +744,7 @@ func Test_getClientIdByPhoneNumber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = getClientIdByPhoneNumber("123", db)
+	_, err = GetClientIdByPhoneNumber("123", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -649,12 +765,12 @@ func Test_getClientIdByPhoneNumber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = getClientIdByPhoneNumber("456", db)
+	_, err = GetClientIdByPhoneNumber("456", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
 
-	clientId, err := getClientIdByPhoneNumber("123", db)
+	clientId, err := GetClientIdByPhoneNumber("123", db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -686,7 +802,7 @@ func Test_getClientIdByPhoneNumber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	clientId, err = getClientIdByPhoneNumber("01", db)
+	clientId, err = GetClientIdByPhoneNumber("01", db)
 	if err == nil {
 		t.Error("want not nil error, got: ", err)
 	}
@@ -694,7 +810,7 @@ func Test_getClientIdByPhoneNumber(t *testing.T) {
 		t.Error("want 0, got: ", clientId)
 	}
 
-	clientId, err = getClientIdByPhoneNumber("987", db)
+	clientId, err = GetClientIdByPhoneNumber("987", db)
 	if err != nil {
 		t.Error("want nil error, got: ", err)
 	}
@@ -707,7 +823,7 @@ func Test_loginForManager(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	ok, err := loginForManager("hello", "golang", db)
+	ok, err := LoginForManager("hello", "golang", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -720,7 +836,7 @@ func Test_loginForManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err = loginForManager("hello", "golang", db)
+	ok, err = LoginForManager("hello", "golang", db)
 	if err != nil {
 		t.Error("want not nil error")
 	}
@@ -737,7 +853,7 @@ func Test_loginForManager(t *testing.T) {
 		sql.Named("password", manager.Password),
 	)
 
-	ok, err = loginForManager("hello", "golang", db)
+	ok, err = LoginForManager("hello", "golang", db)
 	if err != nil {
 		t.Error("want not nil error")
 	}
@@ -745,7 +861,7 @@ func Test_loginForManager(t *testing.T) {
 		t.Error("want: false, got true")
 	}
 
-	ok, err = loginForManager("i-am-manager",
+	ok, err = LoginForManager("i-am-manager",
 		"dont-forget-me", db)
 	if err != nil {
 		t.Error("want nil error")
@@ -758,7 +874,7 @@ func Test_loginForClient(t *testing.T) {
 	db := createDBinMemory(t)
 	defer db.Close()
 
-	ok, err := loginForClient("hello", "golang", db)
+	ok, err := LoginForClient("hello", "golang", db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -771,7 +887,7 @@ func Test_loginForClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, err = loginForClient("hello", "golang", db)
+	ok, err = LoginForClient("hello", "golang", db)
 	if err != nil {
 		t.Error("want not nil error")
 	}
@@ -790,7 +906,7 @@ func Test_loginForClient(t *testing.T) {
 		sql.Named("phone", client.Phone),
 	)
 
-	ok, err = loginForClient("hello", "golang", db)
+	ok, err = LoginForClient("hello", "golang", db)
 	if err != nil {
 		t.Error("want not nil error")
 	}
@@ -798,7 +914,7 @@ func Test_loginForClient(t *testing.T) {
 		t.Error("want: false, got true")
 	}
 
-	ok, err = loginForClient("i-am-client",
+	ok, err = LoginForClient("i-am-client",
 		"dont-forget-me", db)
 	if err != nil {
 		t.Error("want nil error")
@@ -820,7 +936,7 @@ func Test_transferToClient(t *testing.T) {
 		ReceiverAccountNumber: 0,
 	}
 
-	err := transferToClient(transfer, db)
+	err := TransferToClient(transfer, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -834,7 +950,7 @@ func Test_transferToClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = transferToClient(transfer, db)
+	err = TransferToClient(transfer, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
@@ -843,7 +959,7 @@ func Test_transferToClient(t *testing.T) {
 		Login: "first",
 	}
 
-	err = addClient(clientSender, db)
+	err = AddClient(clientSender, db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -851,46 +967,46 @@ func Test_transferToClient(t *testing.T) {
 	clientReceiver := Client{
 		Login: "second",
 	}
-	err = addClient(clientReceiver, db)
+	err = AddClient(clientReceiver, db)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	id1, err := getClientIdByLogin("first", db)
+	id1, err := GetClientIdByLogin("first", db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = addBankAccountToClient(id1, db)
+	err = AddBankAccountToClient(id1, db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := getClientIdByLogin("second", db)
+	id2, err := GetClientIdByLogin("second", db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = addBankAccountToClient(id2, db)
+	err = AddBankAccountToClient(id2, db)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = transferToClient(transfer, db)
+	err = TransferToClient(transfer, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
 
 	transfer.Amount = 0
-	err = transferToClient(transfer, db)
+	err = TransferToClient(transfer, db)
 	if err == nil {
 		t.Error("want not nil error")
 	}
 
-	err = replenishBankAccount(id1, 0, 100, db)
+	err = ReplenishBankAccount(id1, 0, 100, db)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	transfer.Amount = 40
-	err = transferToClient(transfer, db)
+	err = TransferToClient(transfer, db)
 	if err != nil {
 		t.Error("want: nil, got: ", err)
 	}
@@ -919,4 +1035,9 @@ func Test_transferToClient(t *testing.T) {
 	if clientSenderBalance != 60 {
 		t.Error("want: 60, got: ", clientSenderBalance)
 	}
+
+	// transfer money to self
+
+	transfer.ReceiverId = 1
+	err = TransferToClient(transfer, db)
 }
